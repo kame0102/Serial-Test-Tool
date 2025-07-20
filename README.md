@@ -1,6 +1,6 @@
 # name
 Serial Test Tool
-![gif](https://github.com/kamehouse102/SerialTest/blob/master/screenShot.gif)
+![screenShot](https://github.com/user-attachments/assets/c122fd27-a942-42b2-9db4-d4ed58fbcfa5)
 
 ## Overview
 RS-232Cシリアル通信機器のテストを行うツールです。
