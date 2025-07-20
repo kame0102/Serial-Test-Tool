@@ -1,6 +1,5 @@
 # name
 Serial Test Tool
-
 ![gif](https://github.com/kamehouse102/SerialTest/blob/master/screenShot.gif)
 
 ## Overview
