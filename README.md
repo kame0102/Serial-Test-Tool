@@ -4,7 +4,7 @@ Serial Test Tool
 ## Overview
 RS-232Cシリアル通信機器のテストを行うツールです。
 
-![screenShot](https://github.com/user-attachments/assets/c122fd27-a942-42b2-9db4-d4ed58fbcfa5)
+![screenShot](https://github.com/user-attachments/assets/f13de115-59d3-4acf-90c9-7fc042ed1986)
 
 ## Requirement
 PoewerShell
