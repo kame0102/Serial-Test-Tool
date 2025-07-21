@@ -7,7 +7,7 @@ RS-232Cシリアル通信機器のテストを行うツールです。
 ![screenShot](https://github.com/user-attachments/assets/f13de115-59d3-4acf-90c9-7fc042ed1986)
 
 ## Requirement
-PoewerShell
+Windows PoewerShell
 
 ## Usage
 １．機器をテストする際に多数のコマンドを登録してボタン一発で送信できるよう画面を設計しています。
