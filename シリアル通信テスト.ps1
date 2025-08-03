@@ -108,7 +108,8 @@ Function RecvSub {
     $Script:ByteBuf_Len = 0
     $Time = Get-Date  #現在日時セット
     If ($RecvTimeout -eq 0) {  #無限待ちの場合に受信中画面を表示
-        $cmd = '$null = Read-Host "・・・データ受信中・・・`nEnterキーでこの画面を閉じると終了します。"'
+        $cmd = '[Console]::WindowWidth = 75; [Console]::WindowHeight = 5;`
+            $null = Read-Host "・・・データ受信中・・・`nEnterキーでこの画面を閉じると終了します。"'
         $p = Start-Process powershell.exe -ArgumentList "-command $cmd" -PassThru  #受信中画面プロセスを起動
     }
     Try {
