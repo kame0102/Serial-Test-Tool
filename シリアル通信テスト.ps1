@@ -4,17 +4,16 @@
 Set-StrictMode -Version Latest    #コーディング規則を設定
 #---+---+---+---+---+---+---+---+---+---+ アセンブリのロード
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
 
 #---+---+---+---+---+---+---+---+---+---+ 変数宣言
-$ScriptTitle = "シリアル通信テスト Ver.250513"  #スクリプト名
+$ScriptTitle = "シリアル通信テスト Ver.250803"  #スクリプト名
 $IniFilePath = ".\シリアル通信テスト.ini" #設定ファイルパス
 $OpenFlag = $false    #シリアルポートのオープンフラグ
-[byte[]]$ByteBuf = new-object byte[] 4096  #データバッファ byte
+$ByteBuf = new-object byte[] 4096  #データバッファ byte
 $ByteBuf_Len = 0        #格納データのサイズ
 $RecvChkInterval = 100  #受信チェック間隔 ms
 $RecvTimeout = 500      #受信タイムアウト時間 ms 0の場合は終端文字まで無限待ち（受信データが途切れる場合は大きめに設定）
-$TerminateChr = [byte]0x0d  #受信データの終端文字 ""でタイムアウトするまで受信
+$TerminateChr = New-Object byte[] 1  #受信データの終端文字 未設定時はタイムアウトするまで受信
 $AutoSendId = -1         #自動送信用データNo -1：停止中
 $Encoding = "shift_jis"  #エンコーディング "shift_jis", "utf-8", "utf-16", "utf-32"
 $IntervalTime = Get-Date #送受信間隔の計測用（送信・受信完了後の時刻をセット）
@@ -36,14 +35,14 @@ Function SerialOpen($ComParam) {
     $Script:ComErrEventObj = Register-ObjectEvent -InputObject $ComPortObj -EventName "ErrorReceived" -Action {$true}
 
     # COMポートを開く
-    try {
+    Try {
         $ComPortObj.Open()
-    } catch {
+    } Catch {
         [void][System.Windows.Forms.MessageBox]::Show("シリアルポートのオープンが出来ません。", "エラー", "OK", "Error")
-        Return
+        Return $false
     }
     # バッファデータクリア
-    Start-Sleep -m 500  #ポートオープン時の不要データ削除用に待機
+    #Start-Sleep -m 500
     $ComPortObj.DiscardInBuffer()    #受信バッファーのクリア
     $ComPortObj.DiscardOutBuffer()   #送信バッファーのクリア
     $Script:ByteBuf_Len = 0
@@ -53,6 +52,7 @@ Function SerialOpen($ComParam) {
     $Script:LogLineNo = 0
     $Script:IntervalTime = Get-Date  #現在日時セット
     $Script:OpenFlag = $true
+    Return $true
 }
 
 #---+---+---+---+---+---+---+---+---+---+ シリアルポート クローズ
@@ -96,7 +96,7 @@ Function SendSub($Str) {
 
     #通信エラー確認
     If (Receive-job -job $ComErrEventObj) {
-        [void][System.Windows.Forms.MessageBox]::Show("送信エラーが発生しました。機器の電源を入れ直してください。", "エラー", "OK", "Error")
+        [void][System.Windows.Forms.MessageBox]::Show("送信エラーが発生しました。", "エラー", "OK", "Error")
     }
 
     Return $true
@@ -107,34 +107,48 @@ Function SendSub($Str) {
 Function RecvSub {
     $Script:ByteBuf_Len = 0
     $Time = Get-Date  #現在日時セット
-    If ($RecvTimeout -eq 0) {  #無限待ちの場合サブフォームを表示
-        $p = Start-Process powershell.exe -NoNewWindow -ArgumentList "-command $cmd" -PassThru  #サブフォーム表示プロセスを起動
+    If ($RecvTimeout -eq 0) {  #無限待ちの場合に受信中画面を表示
+        $cmd = '$null = Read-Host "・・・データ受信中・・・`nEnterキーでこの画面を閉じると終了します。"'
+        $p = Start-Process powershell.exe -ArgumentList "-command $cmd" -PassThru  #受信中画面プロセスを起動
     }
-    Do {
-        If ($ComPortObj.BytesToRead -gt 0) {    #受信データ有無確認
-            $Script:ByteBuf_Len += $ComPortObj.Read($ByteBuf, $ByteBuf_Len, $ComPortObj.BytesToRead)  #受信（データバッファ, オフセット, 受信バイト数）
-            If ($Combo_Term.Text -ne "") {
-                If ($ByteBuf[$ByteBuf_Len - 1] -eq $TerminateChr) { Break }    #データ末尾が終端文字なら受信終了
+    Try {
+        Do {
+            If ($ComPortObj.BytesToRead -gt 0) {    #受信データ有無確認
+                $Script:ByteBuf_Len += $ComPortObj.Read($ByteBuf, $ByteBuf_Len, $ComPortObj.BytesToRead)  #受信（データバッファ, オフセット, 受信バイト数）
+                If ($Combo_Term.Text -ne "") {
+                    #データ末尾と終端文字列を確認
+                    If ($ByteBuf_Len -ge $TerminateChr.Length) {
+                        $len = $TerminateChr.Length
+                        Do {
+                            If ($ByteBuf[$ByteBuf_Len - $len] -ne $TerminateChr[$TerminateChr.Length - $len]) { Break }
+                            $len--
+                        } While ($len -gt 0)
+                        If ($len -eq 0) { Break }  #受信終了
+                    }
+                }
+                $Time = Get-Date  #現在日時を再セット
             }
-            $Time = Get-Date  #現在日時を再セット
-        }
-        If ($RecvTimeout -eq 0) {
-            If ($p.HasExited) {  #サブフォームが閉じられたか確認
-                $Ms = 1  #タイムアウトで終了させる
+            If ($RecvTimeout -eq 0) {
+                If ($p.HasExited) {  #受信中画面が閉じられたか確認
+                    $Ms = 1  #タイムアウトで終了させる
+                } Else {
+                    $Ms = 0  #無限待ち
+                    Start-Sleep -m 1    #処理負荷低減のためWait 1ms
+                }
             } Else {
-                $Ms = 0  #無限待ち
-                Start-Sleep -m 1    #処理負荷低減のためWait 1ms
+                If ($RecvTimeout -gt 1000) {
+                    Start-Sleep -m 1    #処理負荷低減のためWait 1ms
+                }
+                $Ms = ((Get-Date) - $Time).TotalMilliseconds  #経過時間 ms
             }
-        } Else {
-            If ($RecvTimeout -gt 1000) {
-                Start-Sleep -m 1    #処理負荷低減のためWait 1ms
-            }
-            $Ms = ((Get-Date) - $Time).TotalMilliseconds  #経過時間 ms
-        }
-    } While ($Ms -le $RecvTimeout)    #受信タイムアウト確認
+        } While ($Ms -le $RecvTimeout)    #受信タイムアウト確認
+    } Catch {
+        $ComPortObj.DiscardInBuffer()    #受信バッファーのクリア
+        [void][System.Windows.Forms.MessageBox]::Show("受信エラーが発生しました。バッファ設定等を確認してください。", "エラー", "OK", "Error")
+    }    
 
     If ($RecvTimeout -eq 0) {
-        If (!$p.HasExited) { $p.kill() }  #サブフォームを閉じる
+        If (!$p.HasExited) { $p.kill() }  #受信中画面を閉じる
     }
 
     If ($Encoding -eq "shift_jis") {
@@ -153,21 +167,27 @@ Function RecvSub {
 
     #通信エラー確認
     If (Receive-job -job $ComErrEventObj) {
-        [void][System.Windows.Forms.MessageBox]::Show("受信エラーが発生しました。機器の電源を入れ直してください。", "エラー", "OK", "Error")
+        [void][System.Windows.Forms.MessageBox]::Show("受信エラーが発生しました。", "エラー", "OK", "Error")
         Return ""
     }
 
     #終端文字確認
     If ($Combo_Term.Text -ne "") {
-        If ($ByteBuf[$ByteBuf_Len - 1] -ne $TerminateChr) {
-            [void][System.Windows.Forms.MessageBox]::Show("データの終端文字が受信できませんでした。", "警告", "OK", "Warning")
-        #} Else {
-        #    $RecvStr = $RecvStr.Substring(0, $RecvStr.Length - 1)    #終端文字を削除
+        $flag = $true
+        If ($ByteBuf_Len -ge $TerminateChr.Length) {
+            $len = $TerminateChr.Length
+            Do {
+                If ($ByteBuf[$ByteBuf_Len - $len] -ne $TerminateChr[$TerminateChr.Length - $len]) { Break }
+                $len--
+            } While ($len -gt 0)
+            If ($len -eq 0) { $flag = $false }
+        }
+        If ($flag) {
+            [void][System.Windows.Forms.MessageBox]::Show("データの終端文字が違います。", "警告", "OK", "Warning")
         }
     }
 
     Return $Str
-    #Return $RecvStr
 }
 
 #---+---+---+---+---+---+---+---+---+---+ 通信ログ表示
@@ -376,10 +396,9 @@ $Combo_ComPort.Add_DropDown({
     } Else {
         Foreach ($Com in $ComAry) { $TextBox_Log.Text += $Com + "`r`n" }
         #Foreach ($Com in $ComAry) { $TextBox_Log.Text += $Com.FriendlyName + "`r`n" }
+        $Combo_ComPort.Items.Clear()
+        [void] $Combo_ComPort.Items.AddRange($ComAry)  #アイテム追加
     }
-    $Combo_ComPort.Items.Clear()
-    $Com = [System.IO.Ports.SerialPort]::GetPortNames()  #COMポート番号一覧取得
-    If ($Com.Count -gt 0) { [void] $Combo_ComPort.Items.AddRange($Com) }  #アイテム追加
 })
 
 #---+---+---+---+---+---+---+---+---+---+ ボーレート設定
@@ -511,17 +530,17 @@ $Combo_Term.size = "60, 30"
 [void] $Combo_Term.Items.AddRange(@(`
     "", "<NUL>", "<SOH>" ,"<STX>" ,"<ETX>" ,"<EOT>" ,"<ENQ>" ,"<ACK>" ,"<BEL>" ,"<BS>" ,"<HT>" ,"<LF>",`
     "<VT>", "<FF>", "<CR>", "<SO>", "<SI>", "<DLE>", "<DC1>" ,"<DC2>", "<DC3>", "<DC4>", "<NAK>",`
-    "<SYN>", "<ETB>", "<CAN>", "<EM>", "<SUB>", "<ESC>", "<FS>", "<GS>", "<RS>", "<US>", "<SPC>", "<DEL>"))
-$Combo_Term.SelectedItem = "<CR>"
+    "<SYN>", "<ETB>", "<CAN>", "<EM>", "<SUB>", "<ESC>", "<FS>", "<GS>", "<RS>", "<US>", "<SPC>", "<DEL>",`
+    "<CR><LF>", "<LF><NUL>"))
+$Combo_Term.SelectedItem = ""
 $Form.Controls.Add($Combo_Term) 
 #値の変更時イベント
 $Combo_Term.Add_TextChanged({
     If ($Combo_Term.Text -ne "") {
         $Script:ByteBuf_Len = ChrCodeConv $Combo_Term.Text
-        If ($ByteBuf_Len -eq 1) {
-            $Script:TerminateChr = $ByteBuf[0]
-        } Else {
-            [void][System.Windows.Forms.MessageBox]::Show("終端文字は1文字までです。", "警告", "OK", "Warning")
+        $Script:TerminateChr = New-Object byte[] $ByteBuf_Len
+        For ($i = 0; $i -lt $ByteBuf_Len; $i++) {
+            $Script:TerminateChr[$i] = $ByteBuf[$i]
         }
     }
 })
@@ -553,13 +572,32 @@ $Numeric_Tout.Add_TextChanged({
     $Script:RecvTimeout = [int]$Numeric_Tout.Text
 })
 
-$Pos_X += 65
+#---+---+---+---+---+---+---+---+---+---+ 受信バッファ
+$Pos_X += 70
 #ラベル
 $Label = New-Object System.Windows.Forms.Label
 $Label.Location = "$Pos_X, $Pos_Y"
 $Label.AutoSize = $true            #文字の長さに合わせ自動調整
-$Label.Text = "0 で無限待ち"
+$Label.Text = "バッファ`n　　KB"
 $Form.Controls.Add($Label)
+
+$Pos_X += 45
+#数値UpDownコントロール
+$Numeric_Buf = New-Object System.Windows.Forms.NumericUpDown
+$Numeric_Buf.location = "$Pos_X, $Pos_Y"
+$Numeric_Buf.Size = "60, 30"
+#$Numeric_Buf.TextAlign = "Right"
+#$Numeric_Buf.UpDownAlign = "Right"
+$Numeric_Buf.Increment = 1
+$Numeric_Buf.Maximum = "9999"
+$Numeric_Buf.Minimum = "1"
+$Numeric_Buf.Text = 4
+$Numeric_Buf.InterceptArrowKeys = $True
+$Form.Controls.Add($Numeric_Buf) 
+#値の変更時イベント
+$Numeric_Buf.Add_TextChanged({
+    $Script:ByteBuf = new-object byte[] ([int]$Numeric_Buf.Text * 1024)  #データバッファ byte
+})
 
 #---+---+---+---+---+---+---+---+---+---+ 線
 $Pos_X = 10; $Pos_Y += 30  #表示位置
@@ -836,14 +874,22 @@ $Button_SendF.Add_Click({
     If ([System.IO.Path]::GetExtension($FilePath) -eq ".txt") {  #拡張子txt確認
         #テキストファイル送信
         foreach ($Str in Get-Content $FilePath) {  #1行ずつ読み込み
-            SendSub $Str  #データ送信
+            If ($Str.Length -gt $ByteBuf.Length) {
+                [void][System.Windows.Forms.MessageBox]::Show("送信データがバッファのサイズを超えています。", "警告", "OK", "Warning")
+            } Else {
+                SendSub $Str  #データ送信
+            }
         }
     } Else {
         #テキストファイル以外は、バイナリファイルとして送信
-        $Script:ByteBuf = Get-Content $FilePath -Encoding Byte  #読み込み 数MBのファイルはNG
-        #$Script:ByteBuf = [System.IO.File]::ReadAllBytes($FilePath)  #.Netクラス使用　読み込み
-        $Script:ByteBuf_Len = (Get-Item $FilePath).Length  #ファイルサイズ取得
-        SendSub "Send_BinFile"
+        If ((Get-Item $FilePath).Length -gt $ByteBuf.Length) {
+            [void][System.Windows.Forms.MessageBox]::Show("送信データがバッファのサイズを超えています。", "警告", "OK", "Warning")
+        } Else {
+            $Script:ByteBuf = Get-Content $FilePath -Encoding Byte  #読み込み 数MBのファイルはNG
+            #$Script:ByteBuf = [System.IO.File]::ReadAllBytes($FilePath)  #.Netクラス使用　読み込み
+            $Script:ByteBuf_Len = (Get-Item $FilePath).Length  #ファイルサイズ取得
+            SendSub "Send_BinFile"
+        }
     }
     #ファイルパスをコンボアイテムに追加
     If (-not $Combo_SendF.Items.Contains($Combo_SendF.Text)) {  #コンテンツ内の同一アイテムを検索
@@ -1026,13 +1072,14 @@ $Button_ComOpen.Add_Click({
         }
         $DataLen = $listBox_Etc.SelectedItem.Substring(0, 1)
         $ComParam = $Combo_ComPort.Text, $Combo_Baud.Text, $Parity, $DataLen, "One"    #COM番号、ボーレート、パリティ（None, Odd, Even, Mark, Space)、データ長、ストップ
-        SerialOpen $ComParam  #ポートオープン
-
-        $Combo_ComPort.Enabled = $false
-        $Combo_Baud.Enabled = $false
-        $listBox_Etc.Enabled = $false
-        $listBox_Flow.Enabled = $false
-        $Button_ComOpen.Enabled = $false
+        $flag = SerialOpen $ComParam  #ポートオープン
+        If ($flag) {
+            $Combo_ComPort.Enabled = $false
+            $Combo_Baud.Enabled = $false
+            $listBox_Etc.Enabled = $false
+            $listBox_Flow.Enabled = $false
+            $Button_ComOpen.Enabled = $false
+        }
     } Else {
         [void][System.Windows.Forms.MessageBox]::Show("COM番号を入力してください。", "警告", "OK", "Warning")
     }
@@ -1159,29 +1206,6 @@ $CancelButton.Anchor = (([System.Windows.Forms.AnchorStyles]::Right)`
 $CancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 #$Form.CancelButton = $CancelButton
 $Form.Controls.Add($CancelButton)
-
-#---+---+---+---+---+---+---+---+---+---+ サブフォーム（受信待ち）
-$cmd = {
-    #アセンブリのロード
-    Add-Type -AssemblyName System.Windows.Forms
-    #サブフォーム
-    $FormSub = New-Object System.Windows.Forms.Form
-    $FormSub.Size = '200, 100'
-    $FormSub.StartPosition = 'manual'
-    $FormSub.Location = '200, 0'
-    $FormSub.MaximizeBox = $false  #最大化ボタン 非表示
-    $FormSub.MinimizeBox = $false  #最小化ボタン 非表示
-    $FormSub.text = '受信待ち'
-    #サブフォームラベル
-    $Label = New-Object System.Windows.Forms.Label
-    $Label.location = '45, 20'
-    $Label.AutoSize = $True        #文字サイズに合わせ自動調整
-    $Label.text = '閉じると受信を終了'
-    $FormSub.Controls.Add($Label)
-    #サブフォーム表示
-    $FormSub.Topmost = $true       #フォームを常に手前に表示
-    [void]$FormSub.ShowDialog()
-}  
 
 #---+---+---+---+---+---+---+---+---+---+ タイマー（起動オプション テキスト表示）
 $Timer = New-Object System.Windows.Forms.Timer
